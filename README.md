@@ -1,4 +1,4 @@
-# Minimal Xiangqi Engine
+# Minimal ChineseChess Engine
 
 This repository is a compact, readable Python Xiangqi engine for adversarial
 search coursework. The priority is being able to read and understand almost
