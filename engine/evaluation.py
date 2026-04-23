@@ -7,7 +7,18 @@ tables, or king safety here without changing the search code.
 
 from __future__ import annotations
 
-from engine.core import ADVISER, BISHOP, BLACK, CANNON, KING, KNIGHT, PAWN, RED, ROOK, Board
+from engine.core import (
+    ADVISER,
+    BISHOP,
+    BLACK,
+    CANNON,
+    KING,
+    KNIGHT,
+    PAWN,
+    RED,
+    ROOK,
+    Board,
+)
 
 PIECE_VALUES: dict[str, int] = {
     KING: 10000,
@@ -36,4 +47,3 @@ def evaluate_material(board: Board, perspective: str = RED) -> int:
 def evaluate(board: Board, perspective: str = RED) -> int:
     """Default evaluator used by search."""
     return evaluate_material(board, perspective)
-

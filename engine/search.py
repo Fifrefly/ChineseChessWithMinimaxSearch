@@ -13,7 +13,13 @@ from time import perf_counter
 
 from engine.core import BLACK, RED, Board, Move, opponent
 from engine.evaluation import evaluate
-from engine.rules import game_over, generate_legal_moves, is_checkmate, is_stalemate, is_threefold_repetition
+from engine.rules import (
+    game_over,
+    generate_legal_moves,
+    is_checkmate,
+    is_stalemate,
+    is_threefold_repetition,
+)
 
 Evaluator = Callable[[Board, str], int]
 MoveOrderer = Callable[[Board, list[Move]], Iterable[Move]]
@@ -86,7 +92,15 @@ def minimax_search(
         for move in ordered_moves:
             board.make_move(move)
             try:
-                score = _minimax(board, depth - 1, root_color, evaluator, move_orderer, counter, ply=1)
+                score = _minimax(
+                    board,
+                    depth - 1,
+                    root_color,
+                    evaluator,
+                    move_orderer,
+                    counter,
+                    ply=1,
+                )
             finally:
                 board.undo_move()
             if root_is_max and score > best_score:
@@ -97,7 +111,9 @@ def minimax_search(
         return _result(best_move, best_score, counter, start, depth)
     finally:
         if board.fen() != original_fen:
-            raise RuntimeError("minimax_search did not restore the original board state.")
+            raise RuntimeError(
+                "minimax_search did not restore the original board state."
+            )
 
 
 def _minimax(
@@ -123,7 +139,18 @@ def _minimax(
         for move in ordered_moves:
             board.make_move(move)
             try:
-                best = max(best, _minimax(board, depth - 1, maximizing_color, evaluator, move_orderer, counter, ply + 1))
+                best = max(
+                    best,
+                    _minimax(
+                        board,
+                        depth - 1,
+                        maximizing_color,
+                        evaluator,
+                        move_orderer,
+                        counter,
+                        ply + 1,
+                    ),
+                )
             finally:
                 board.undo_move()
         return best
@@ -132,27 +159,55 @@ def _minimax(
     for move in ordered_moves:
         board.make_move(move)
         try:
-            best = min(best, _minimax(board, depth - 1, maximizing_color, evaluator, move_orderer, counter, ply + 1))
+            best = min(
+                best,
+                _minimax(
+                    board,
+                    depth - 1,
+                    maximizing_color,
+                    evaluator,
+                    move_orderer,
+                    counter,
+                    ply + 1,
+                ),
+            )
         finally:
             board.undo_move()
     return best
 
 
-def _score_position(board: Board, maximizing_color: str, evaluator: Evaluator, counter: _Counter, ply: int) -> int:
+def _score_position(
+    board: Board,
+    maximizing_color: str,
+    evaluator: Evaluator,
+    counter: _Counter,
+    ply: int,
+) -> int:
     """Return terminal score or evaluator score from maximizing side's view."""
     counter.leaf_nodes += 1
     if is_checkmate(board):
-        return -MATE_SCORE + ply if board.side_to_move == maximizing_color else MATE_SCORE - ply
+        return (
+            -MATE_SCORE + ply
+            if board.side_to_move == maximizing_color
+            else MATE_SCORE - ply
+        )
     if is_stalemate(board) or is_threefold_repetition(board):
         return 0
     return evaluator(board, maximizing_color)
 
 
-def _result(best_move: Move | None, score: int, counter: _Counter, start: float, depth: int) -> SearchResult:
-    return SearchResult(best_move, score, SearchStats(counter.nodes_visited, counter.leaf_nodes, perf_counter() - start, depth))
+def _result(
+    best_move: Move | None, score: int, counter: _Counter, start: float, depth: int
+) -> SearchResult:
+    return SearchResult(
+        best_move,
+        score,
+        SearchStats(
+            counter.nodes_visited, counter.leaf_nodes, perf_counter() - start, depth
+        ),
+    )
 
 
 def other_side(color: str) -> str:
     """Small public helper for experiments."""
     return opponent(color)
-

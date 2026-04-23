@@ -63,4 +63,3 @@ def test_minimax_does_not_pollute_board_state() -> None:
 
     assert board.fen() == original
     assert board.history_length == 0
-

@@ -170,7 +170,11 @@ class Move:
 
     def to_dict(self) -> dict[str, Any]:
         """Return a readable dictionary for tests and debugging."""
-        data: dict[str, Any] = {"from": str(self.from_pos), "to": str(self.to_pos), "flags": self.flags}
+        data: dict[str, Any] = {
+            "from": str(self.from_pos),
+            "to": str(self.to_pos),
+            "flags": self.flags,
+        }
         if self.piece is not None:
             data["piece"] = self.piece.to_dict()
         if self.captured is not None:
@@ -242,7 +246,9 @@ def parse_fen_record(fen: str = DEFAULT_FEN) -> ParsedFEN:
     if castling != "-" or en_passant != "-":
         raise InvalidFENError("3rd and 4th FEN fields should both be '-'.")
     if not halfmove_text.isdecimal() or int(halfmove_text) < 0:
-        raise InvalidFENError("5th field (half move counter) must be a non-negative integer.")
+        raise InvalidFENError(
+            "5th field (half move counter) must be a non-negative integer."
+        )
     if not fullmove_text.isdecimal() or int(fullmove_text) <= 0:
         raise InvalidFENError("6th field (move number) must be a positive integer.")
 
@@ -298,7 +304,9 @@ class Board:
     """
 
     def __init__(self, fen: str | None = None) -> None:
-        self._state: BoardState = [[None for _ in range(BOARD_COLS)] for _ in range(BOARD_ROWS)]
+        self._state: BoardState = [
+            [None for _ in range(BOARD_COLS)] for _ in range(BOARD_ROWS)
+        ]
         self.side_to_move = RED
         self.halfmove_clock = 0
         self.fullmove_number = 1
@@ -316,7 +324,9 @@ class Board:
 
     def fen(self) -> str:
         """Return the current position as FEN."""
-        return serialize_fen(self._state, self.side_to_move, self.halfmove_clock, self.fullmove_number)
+        return serialize_fen(
+            self._state, self.side_to_move, self.halfmove_clock, self.fullmove_number
+        )
 
     def position_key(self) -> str:
         """Return the repetition key used by xiangqi.js: placement + side."""
@@ -379,7 +389,9 @@ class Board:
             to_pos,
             piece=moved_piece,
             captured=captured_piece,
-            flags=CAPTURE_MOVE_FLAG if captured_piece else move.flags or NORMAL_MOVE_FLAG,
+            flags=(
+                CAPTURE_MOVE_FLAG if captured_piece else move.flags or NORMAL_MOVE_FLAG
+            ),
         )
         self._history.append(
             HistoryEntry(
@@ -498,7 +510,9 @@ def _validate_piece_constraints(board_state: BoardState) -> None:
         for piece_type in (KING, ADVISER, BISHOP, PAWN):
             for position in positions.get((color, piece_type), []):
                 if _out_of_place(piece_type, position, color):
-                    raise InvalidFENError(f"{color} {piece_type} is on an illegal square.")
+                    raise InvalidFENError(
+                        f"{color} {piece_type} is on an illegal square."
+                    )
 
 
 def _validate_board_shape(board_state: BoardState) -> None:
@@ -517,11 +531,31 @@ def _out_of_place(piece_type: str, position: Position, color: str) -> bool:
     if piece_type == PAWN:
         starting_files = {0, 2, 4, 6, 8}
         if color == RED:
-            return position.row > 6 or (position.row > 4 and position.col not in starting_files)
-        return position.row < 3 or (position.row < 5 and position.col not in starting_files)
+            return position.row > 6 or (
+                position.row > 4 and position.col not in starting_files
+            )
+        return position.row < 3 or (
+            position.row < 5 and position.col not in starting_files
+        )
     if piece_type == BISHOP:
-        red = {Position(9, 2), Position(9, 6), Position(7, 0), Position(7, 4), Position(7, 8), Position(5, 2), Position(5, 6)}
-        black = {Position(0, 2), Position(0, 6), Position(2, 0), Position(2, 4), Position(2, 8), Position(4, 2), Position(4, 6)}
+        red = {
+            Position(9, 2),
+            Position(9, 6),
+            Position(7, 0),
+            Position(7, 4),
+            Position(7, 8),
+            Position(5, 2),
+            Position(5, 6),
+        }
+        black = {
+            Position(0, 2),
+            Position(0, 6),
+            Position(2, 0),
+            Position(2, 4),
+            Position(2, 8),
+            Position(4, 2),
+            Position(4, 6),
+        }
         return position not in (red if color == RED else black)
     if piece_type in {KING, ADVISER}:
         return not in_palace(position, color)
@@ -543,4 +577,3 @@ def crossed_river(position: Position, color: str) -> bool:
 def elephant_crosses_river(position: Position, color: str) -> bool:
     """Return whether an elephant destination would cross the river."""
     return position.row < 5 if color == RED else position.row > 4
-

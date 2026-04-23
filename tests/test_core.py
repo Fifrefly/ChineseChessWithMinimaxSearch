@@ -79,4 +79,3 @@ def test_make_undo_restores_fen_for_many_legal_moves() -> None:
             board.undo_move()
             assert board.fen() == original
             assert board.history_length == 0
-

@@ -58,7 +58,9 @@ ELEPHANT_STEPS: tuple[tuple[int, int, int, int], ...] = (
 # ---------------------------------------------------------------------------
 
 
-def generate_pseudo_legal_moves(board: Board, side_to_move: str | None = None) -> list[Move]:
+def generate_pseudo_legal_moves(
+    board: Board, side_to_move: str | None = None
+) -> list[Move]:
     """Return all moves that obey piece movement and occupancy rules."""
     side = board.side_to_move if side_to_move is None else side_to_move
     moves: list[Move] = []
@@ -88,11 +90,19 @@ def generate_piece_moves(board: Board, from_pos: Position, piece: Piece) -> list
 
 
 def _king_moves(board: Board, from_pos: Position, piece: Piece) -> list[Move]:
-    return [move for move in _step_moves(board, from_pos, piece, ORTHOGONAL_DIRECTIONS) if in_palace(move.to_pos, piece.color)]
+    return [
+        move
+        for move in _step_moves(board, from_pos, piece, ORTHOGONAL_DIRECTIONS)
+        if in_palace(move.to_pos, piece.color)
+    ]
 
 
 def _advisor_moves(board: Board, from_pos: Position, piece: Piece) -> list[Move]:
-    return [move for move in _step_moves(board, from_pos, piece, DIAGONAL_DIRECTIONS) if in_palace(move.to_pos, piece.color)]
+    return [
+        move
+        for move in _step_moves(board, from_pos, piece, DIAGONAL_DIRECTIONS)
+        if in_palace(move.to_pos, piece.color)
+    ]
 
 
 def _elephant_moves(board: Board, from_pos: Position, piece: Piece) -> list[Move]:
@@ -102,7 +112,9 @@ def _elephant_moves(board: Board, from_pos: Position, piece: Piece) -> list[Move
         to_pos = Position(from_pos.row + row_delta, from_pos.col + col_delta)
         if not board.is_inside(to_pos) or not board.is_inside(eye):
             continue
-        if board.get_piece(eye) is not None or elephant_crosses_river(to_pos, piece.color):
+        if board.get_piece(eye) is not None or elephant_crosses_river(
+            to_pos, piece.color
+        ):
             continue
         move = _target_move(board, from_pos, to_pos, piece)
         if move is not None:
@@ -141,13 +153,23 @@ def _cannon_moves(board: Board, from_pos: Position, piece: Piece) -> list[Move]:
             target = board.get_piece(current)
             if target is None:
                 if not screen_seen:
-                    moves.append(Move(from_pos, current, piece=piece, flags=NORMAL_MOVE_FLAG))
+                    moves.append(
+                        Move(from_pos, current, piece=piece, flags=NORMAL_MOVE_FLAG)
+                    )
                 continue
             if not screen_seen:
                 screen_seen = True
                 continue
             if target.color != piece.color:
-                moves.append(Move(from_pos, current, piece=piece, captured=target, flags=CAPTURE_MOVE_FLAG))
+                moves.append(
+                    Move(
+                        from_pos,
+                        current,
+                        piece=piece,
+                        captured=target,
+                        flags=CAPTURE_MOVE_FLAG,
+                    )
+                )
             break
     return moves
 
@@ -160,7 +182,12 @@ def _pawn_moves(board: Board, from_pos: Position, piece: Piece) -> list[Move]:
     return list(_step_moves(board, from_pos, piece, directions))
 
 
-def _step_moves(board: Board, from_pos: Position, piece: Piece, directions: Iterable[tuple[int, int]]) -> Iterable[Move]:
+def _step_moves(
+    board: Board,
+    from_pos: Position,
+    piece: Piece,
+    directions: Iterable[tuple[int, int]],
+) -> Iterable[Move]:
     for row_delta, col_delta in directions:
         to_pos = Position(from_pos.row + row_delta, from_pos.col + col_delta)
         if not board.is_inside(to_pos):
@@ -170,7 +197,12 @@ def _step_moves(board: Board, from_pos: Position, piece: Piece, directions: Iter
             yield move
 
 
-def _sliding_moves(board: Board, from_pos: Position, piece: Piece, directions: Iterable[tuple[int, int]]) -> list[Move]:
+def _sliding_moves(
+    board: Board,
+    from_pos: Position,
+    piece: Piece,
+    directions: Iterable[tuple[int, int]],
+) -> list[Move]:
     moves: list[Move] = []
     for row_delta, col_delta in directions:
         current = from_pos
@@ -180,19 +212,37 @@ def _sliding_moves(board: Board, from_pos: Position, piece: Piece, directions: I
                 break
             target = board.get_piece(current)
             if target is None:
-                moves.append(Move(from_pos, current, piece=piece, flags=NORMAL_MOVE_FLAG))
+                moves.append(
+                    Move(from_pos, current, piece=piece, flags=NORMAL_MOVE_FLAG)
+                )
                 continue
             if target.color != piece.color:
-                moves.append(Move(from_pos, current, piece=piece, captured=target, flags=CAPTURE_MOVE_FLAG))
+                moves.append(
+                    Move(
+                        from_pos,
+                        current,
+                        piece=piece,
+                        captured=target,
+                        flags=CAPTURE_MOVE_FLAG,
+                    )
+                )
             break
     return moves
 
 
-def _target_move(board: Board, from_pos: Position, to_pos: Position, piece: Piece) -> Move | None:
+def _target_move(
+    board: Board, from_pos: Position, to_pos: Position, piece: Piece
+) -> Move | None:
     target = board.get_piece(to_pos)
     if target is not None and target.color == piece.color:
         return None
-    return Move(from_pos, to_pos, piece=piece, captured=target, flags=CAPTURE_MOVE_FLAG if target else NORMAL_MOVE_FLAG)
+    return Move(
+        from_pos,
+        to_pos,
+        piece=piece,
+        captured=target,
+        flags=CAPTURE_MOVE_FLAG if target else NORMAL_MOVE_FLAG,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -222,16 +272,24 @@ def is_square_attacked(board: Board, target_pos: PositionLike, by_color: str) ->
 def is_check(board: Board, color: str | None = None) -> bool:
     """Return whether ``color`` is in check. Defaults to side to move."""
     checked_color = board.side_to_move if color is None else color
-    return is_square_attacked(board, find_king(board, checked_color), opponent(checked_color))
+    return is_square_attacked(
+        board, find_king(board, checked_color), opponent(checked_color)
+    )
 
 
-def _piece_attacks(board: Board, from_pos: Position, piece: Piece, target: Position) -> bool:
+def _piece_attacks(
+    board: Board, from_pos: Position, piece: Piece, target: Position
+) -> bool:
     if from_pos == target:
         return False
     if piece.type == KING:
         return _king_attacks(board, from_pos, piece, target)
     if piece.type == ADVISER:
-        return abs(from_pos.row - target.row) == 1 and abs(from_pos.col - target.col) == 1 and in_palace(target, piece.color)
+        return (
+            abs(from_pos.row - target.row) == 1
+            and abs(from_pos.col - target.col) == 1
+            and in_palace(target, piece.color)
+        )
     if piece.type == BISHOP:
         return _elephant_attacks(board, from_pos, piece, target)
     if piece.type == KNIGHT:
@@ -245,7 +303,9 @@ def _piece_attacks(board: Board, from_pos: Position, piece: Piece, target: Posit
     return False
 
 
-def _king_attacks(board: Board, from_pos: Position, piece: Piece, target: Position) -> bool:
+def _king_attacks(
+    board: Board, from_pos: Position, piece: Piece, target: Position
+) -> bool:
     target_piece = board.get_piece(target)
     if (
         target_piece is not None
@@ -255,13 +315,21 @@ def _king_attacks(board: Board, from_pos: Position, piece: Piece, target: Positi
         and _same_line_blocker_count(board, from_pos, target) == 0
     ):
         return True
-    return abs(from_pos.row - target.row) + abs(from_pos.col - target.col) == 1 and in_palace(target, piece.color)
+    return abs(from_pos.row - target.row) + abs(
+        from_pos.col - target.col
+    ) == 1 and in_palace(target, piece.color)
 
 
-def _elephant_attacks(board: Board, from_pos: Position, piece: Piece, target: Position) -> bool:
+def _elephant_attacks(
+    board: Board, from_pos: Position, piece: Piece, target: Position
+) -> bool:
     row_delta = target.row - from_pos.row
     col_delta = target.col - from_pos.col
-    if abs(row_delta) != 2 or abs(col_delta) != 2 or elephant_crosses_river(target, piece.color):
+    if (
+        abs(row_delta) != 2
+        or abs(col_delta) != 2
+        or elephant_crosses_river(target, piece.color)
+    ):
         return False
     eye = Position(from_pos.row + row_delta // 2, from_pos.col + col_delta // 2)
     return board.is_inside(eye) and board.get_piece(eye) is None
@@ -272,7 +340,11 @@ def _horse_attacks(board: Board, from_pos: Position, target: Position) -> bool:
     col_delta = target.col - from_pos.col
     if sorted((abs(row_delta), abs(col_delta))) != [1, 2]:
         return False
-    leg = Position(from_pos.row + (1 if row_delta > 0 else -1), from_pos.col) if abs(row_delta) == 2 else Position(from_pos.row, from_pos.col + (1 if col_delta > 0 else -1))
+    leg = (
+        Position(from_pos.row + (1 if row_delta > 0 else -1), from_pos.col)
+        if abs(row_delta) == 2
+        else Position(from_pos.row, from_pos.col + (1 if col_delta > 0 else -1))
+    )
     return board.is_inside(leg) and board.get_piece(leg) is None
 
 
@@ -282,10 +354,14 @@ def _pawn_attacks(from_pos: Position, piece: Piece, target: Position) -> bool:
     col_delta = target.col - from_pos.col
     if (row_delta, col_delta) == (forward, 0):
         return True
-    return crossed_river(from_pos, piece.color) and row_delta == 0 and abs(col_delta) == 1
+    return (
+        crossed_river(from_pos, piece.color) and row_delta == 0 and abs(col_delta) == 1
+    )
 
 
-def _same_line_blocker_count(board: Board, start: Position, end: Position) -> int | None:
+def _same_line_blocker_count(
+    board: Board, start: Position, end: Position
+) -> int | None:
     if start.row == end.row:
         row_step = 0
         col_step = 1 if end.col > start.col else -1
@@ -329,7 +405,9 @@ def generate_legal_moves(board: Board, side_to_move: str | None = None) -> list[
 
 def has_legal_moves(board: Board, color: str | None = None) -> bool:
     """Return whether ``color`` has at least one legal move."""
-    return bool(generate_legal_moves(board, board.side_to_move if color is None else color))
+    return bool(
+        generate_legal_moves(board, board.side_to_move if color is None else color)
+    )
 
 
 def is_checkmate(board: Board, color: str | None = None) -> bool:
@@ -387,4 +465,3 @@ def legal_move_from_iccs(board: Board, text: str) -> Move:
         if move.from_pos == wanted.from_pos and move.to_pos == wanted.to_pos:
             return move
     raise ValueError(f"Illegal move: {text}")
-

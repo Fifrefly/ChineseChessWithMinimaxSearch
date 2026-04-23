@@ -2,7 +2,20 @@
 
 from __future__ import annotations
 
-from engine.core import BLACK, RED, ADVISER, BISHOP, CANNON, KING, KNIGHT, PAWN, Board, Move, Piece, Position
+from engine.core import (
+    BLACK,
+    RED,
+    ADVISER,
+    BISHOP,
+    CANNON,
+    KING,
+    KNIGHT,
+    PAWN,
+    Board,
+    Move,
+    Piece,
+    Position,
+)
 from engine.rules import (
     find_king,
     game_over,
@@ -137,4 +150,3 @@ def test_threefold_repetition_uses_placement_and_side_to_move() -> None:
     assert game_over(board) is True
     assert board.fen() == fen_before
     assert board.history_length == len(REPEAT_SEQUENCE)
-
