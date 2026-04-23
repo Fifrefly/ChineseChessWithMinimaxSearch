@@ -1,0 +1,17 @@
+[project]
+name = "chinese-chess"
+version = "0.1.0"
+description = "A testable Python rules layer for Xiangqi adversarial-search experiments."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-ra"
+

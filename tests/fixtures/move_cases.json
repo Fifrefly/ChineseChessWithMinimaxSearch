@@ -1,0 +1,28 @@
+{
+  "minimal_fen": "4k4/9/9/9/9/9/9/9/9/4K4 r - - 0 1",
+  "notes": [
+    "Coordinates use ICCS orientation: a9 is top-left from black's side, i0 is bottom-right from red's side.",
+    "These fixtures are intentionally small and are for pseudo-legal move tests only; legal self-check filtering is added later."
+  ],
+  "cases": [
+    {
+      "name": "red_pawn_before_river",
+      "piece": {"type": "p", "color": "r"},
+      "from": "e3",
+      "expected": ["e3e4"]
+    },
+    {
+      "name": "red_horse_center_unblocked",
+      "piece": {"type": "n", "color": "r"},
+      "from": "e4",
+      "expected": ["e4d6", "e4f6", "e4d2", "e4f2", "e4c5", "e4c3", "e4g5", "e4g3"]
+    },
+    {
+      "name": "red_elephant_center_own_side",
+      "piece": {"type": "b", "color": "r"},
+      "from": "e2",
+      "expected": ["e2c4", "e2g4", "e2c0", "e2g0"]
+    }
+  ]
+}
+
