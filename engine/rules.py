@@ -158,7 +158,7 @@ def _cannon_moves(board: Board, from_pos: Position, piece: Piece) -> list[Move]:
                     )
                 continue
             if not screen_seen:
-                screen_seen = True
+                screen_seen = True # 找到炮架
                 continue
             if target.color != piece.color:
                 moves.append(
