@@ -101,7 +101,7 @@ class Position:
 
 @dataclass(frozen=True, slots=True)
 class Piece:
-    """A Xiangqi piece using xiangqi.js symbols."""
+    """A Xiangqi piece object."""
 
     type: str
     color: str
@@ -557,7 +557,11 @@ def _out_of_place(piece_type: str, position: Position, color: str) -> bool:
             Position(4, 6),
         }
         return position not in (red if color == RED else black)
-    if piece_type in {KING, ADVISER}:
+    if piece_type == ADVISER:
+        red = {Position(9, 3), Position(9, 5), Position(8, 4), Position(7, 3), Position(7, 5)}
+        black = {Position(0, 3), Position(0, 5), Position(1, 4), Position(2, 3), Position(2, 5)}
+        return position not in (red if color == RED else black)
+    if piece_type == KING:
         return not in_palace(position, color)
     return False
 

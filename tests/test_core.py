@@ -42,6 +42,19 @@ def test_invalid_fen_reports_error_and_raises() -> None:
         Board("invalid")
 
 
+def test_advisor_fen_square_must_be_on_diagonal_palace_points() -> None:
+    # e0 is inside red's palace, but a red advisor may only stand on the
+    # diagonal-point set: d0/f0/e1/d2/f2 in ICCS terms.
+    invalid = "4k4/9/9/9/9/9/9/9/4K4/4A4 r - - 0 1"
+
+    valid, error = validate_fen(invalid)
+
+    assert valid is False
+    assert error is not None
+    with pytest.raises(InvalidFENError):
+        Board(invalid)
+
+
 def test_iccs_position_and_move_helpers() -> None:
     position = Position.from_iccs("h2")
     move = parse_iccs_move("h2-e2")
