@@ -80,6 +80,7 @@ def test_analyze_benchmark_generates_markdown_and_summary_csv(
     self_play = tmp_path / "self_play.csv"
     report = tmp_path / "summary.md"
     summary_csv = tmp_path / "summary.csv"
+    worst_cases = tmp_path / "worst_cases.csv"
 
     with benchmark.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=BENCHMARK_FIELDS)
@@ -108,6 +109,32 @@ def test_analyze_benchmark_generates_markdown_and_summary_csv(
                 "score_error": -2,
                 "abs_score_error": 2,
                 "move_matches_oracle": True,
+            }
+        )
+        writer.writerow(
+            {
+                "position_id": 1,
+                "fen": Board().fen(),
+                "side_to_move": "b",
+                "evaluator": "material",
+                "static_score": -50,
+                "search_depth": 1,
+                "search_score": -10,
+                "best_move": "b0b1",
+                "nodes_visited": 3,
+                "leaf_nodes": 2,
+                "cutoffs": 0,
+                "elapsed_seconds": 0.02,
+                "oracle_evaluator": "full_static",
+                "oracle_depth": 2,
+                "oracle_score": 20,
+                "oracle_best_move": "c0c1",
+                "candidate_oracle_score": 5,
+                "oracle_regret": 15,
+                "abs_oracle_regret": 15,
+                "score_error": -30,
+                "abs_score_error": 30,
+                "move_matches_oracle": False,
             }
         )
 
@@ -149,10 +176,27 @@ def test_analyze_benchmark_generates_markdown_and_summary_csv(
         self_play=str(self_play),
         output_report=str(report),
         output_summary_csv=str(summary_csv),
+        output_worst_cases=str(worst_cases),
+        worst_cases_per_evaluator=1,
     )
 
     assert report.exists()
     assert summary_csv.exists()
+    assert worst_cases.exists()
     assert "# Experiment Summary" in markdown
     assert "mean_abs_oracle_regret" in markdown
+    assert "p90_abs_oracle_regret" in markdown
+    assert "max_abs_oracle_regret" in markdown
+    assert "Worst Regret Cases" in markdown
     assert "material" in report.read_text(encoding="utf-8")
+    with worst_cases.open(newline="", encoding="utf-8") as handle:
+        worst_rows = list(csv.DictReader(handle))
+    assert len(worst_rows) == 1
+    assert worst_rows[0]["position_id"] == "1"
+    with summary_csv.open(newline="", encoding="utf-8") as handle:
+        summary_rows = list(csv.DictReader(handle))
+        summary_fields = summary_rows[0].keys()
+    assert "red_wins" in summary_fields
+    assert "black_losses" in summary_fields
+    assert "red_win_rate" in summary_fields
+    assert "black_win_rate" in summary_fields

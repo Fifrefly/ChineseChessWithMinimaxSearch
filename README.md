@@ -141,12 +141,21 @@ chosen move is poor. Oracle regret instead applies the tested evaluator's move,
 then uses the same oracle evaluator to score the continuation. Lower
 `mean_abs_oracle_regret` is therefore the main decision-quality metric;
 `mean_abs_score_error` is kept only as a supporting diagnostic.
+The summary also reports `p90_abs_oracle_regret` and
+`max_abs_oracle_regret`: p90 helps judge how stable an evaluator is in bad
+cases, while max regret is a quick way to find catastrophic moves. The analyzer
+can write a worst-case CSV for manual position review, which is useful for
+checking where material, position, or MLP evaluators are making qualitatively
+different mistakes.
 
 Shallow self-play often reaches the move limit without a tactical result. Use
 `--adjudicate-max-plies` to score the final position with an adjudicator
 evaluator, typically `full_static`, and award RED/BLACK wins only when the score
 exceeds the threshold. A threshold around `200` is a reasonable starting point.
 This is an experimental adjudication rule, not an official Xiangqi result rule.
+When reading tournament results, compare both total win rate and red/black
+color splits, because first-move advantage can otherwise look like evaluator
+strength.
 
 Recommended end-to-end workflow:
 
@@ -161,7 +170,7 @@ conda run -n chess python experiments/evaluation_benchmark.py --positions data/e
 
 conda run -n chess python experiments/self_play_tournament.py --output data/self_play_results.csv --evaluators material,full_static,weighted_static,mlp --games-per-pair 2 --depth 2 --max-plies 120 --mlp-model data/mlp_eval.pt --opening-random-plies 2 --adjudicate-max-plies --adjudicator-evaluator full_static --adjudication-threshold 200 --seed 42
 
-conda run -n chess python experiments/analyze_benchmark.py --benchmark data/evaluation_benchmark.csv --self-play data/self_play_results.csv --output-report data/experiment_summary.md --output-summary-csv data/experiment_summary.csv
+conda run -n chess python experiments/analyze_benchmark.py --benchmark data/evaluation_benchmark.csv --self-play data/self_play_results.csv --output-report data/experiment_summary.md --output-summary-csv data/experiment_summary.csv --output-worst-cases data/worst_cases.csv --worst-cases-per-evaluator 3
 ```
 
 Small smoke tests only verify that the full pipeline runs and that metrics are

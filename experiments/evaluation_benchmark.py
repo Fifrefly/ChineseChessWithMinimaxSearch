@@ -63,6 +63,21 @@ def _move_to_text(move: Move | None) -> str:
     return "" if move is None else move.to_iccs()
 
 
+def _percentile(values: list[int], percentile: float) -> float:
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return float(values[0])
+    ordered = sorted(values)
+    rank = (len(ordered) - 1) * percentile
+    lower = int(rank)
+    upper = min(lower + 1, len(ordered) - 1)
+    if lower == upper:
+        return float(ordered[lower])
+    weight = rank - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
 def _candidate_oracle_score(
     board: Board,
     candidate_move: Move | None,
@@ -231,6 +246,26 @@ def run_benchmark(
         print(
             "Lowest mean abs_oracle_regret: "
             f"{best_regret} ({regret_means[best_regret]:.4f})"
+        )
+        p90_regrets = {
+            name: _percentile(values, 0.9)
+            for name, values in abs_regrets_by_evaluator.items()
+            if values
+        }
+        max_regrets = {
+            name: max(values)
+            for name, values in abs_regrets_by_evaluator.items()
+            if values
+        }
+        best_p90 = min(p90_regrets, key=p90_regrets.__getitem__)
+        worst_max = max(max_regrets, key=max_regrets.__getitem__)
+        print(
+            "Lowest p90 abs_oracle_regret: "
+            f"{best_p90} ({p90_regrets[best_p90]:.4f})"
+        )
+        print(
+            "Highest max abs_oracle_regret: "
+            f"{worst_max} ({max_regrets[worst_max]:.4f})"
         )
     match_rates = {
         name: sum(values) / len(values)
