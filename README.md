@@ -121,6 +121,55 @@ conda run -n chess python experiments/train_mlp_evaluator.py --input data/mlp_tr
 conda run -n chess python experiments/evaluate_mlp_model.py --model data/mlp_eval_smoke.pt --fen "4k4/9/9/9/9/9/9/9/9/4K4 r - - 0 1" --perspective RED
 ```
 
+## Experiment Pipeline
+
+The evaluation pipeline separates four kinds of checks:
+
+- static sanity tests: unit tests that verify evaluator invariants, feature
+  decomposition, and board-state restoration.
+- oracle benchmark: compare evaluator search scores against deeper labels from
+  a chosen oracle evaluator.
+- search decision benchmark: compare each evaluator's best move with the oracle
+  best move, measure oracle regret, and record search efficiency.
+- self-play tournament: let evaluators play both colors and summarize results,
+  nodes, cutoffs, and time.
+
+The benchmark reports oracle regret because different evaluators can use
+different score scales. Directly comparing an evaluator's `search_score` to the
+oracle score can be misleading: a score may look numerically close while the
+chosen move is poor. Oracle regret instead applies the tested evaluator's move,
+then uses the same oracle evaluator to score the continuation. Lower
+`mean_abs_oracle_regret` is therefore the main decision-quality metric;
+`mean_abs_score_error` is kept only as a supporting diagnostic.
+
+Shallow self-play often reaches the move limit without a tactical result. Use
+`--adjudicate-max-plies` to score the final position with an adjudicator
+evaluator, typically `full_static`, and award RED/BLACK wins only when the score
+exceeds the threshold. A threshold around `200` is a reasonable starting point.
+This is an experimental adjudication rule, not an official Xiangqi result rule.
+
+Recommended end-to-end workflow:
+
+```bash
+conda run -n chess python experiments/generate_mlp_training_data.py --output data/mlp_train.csv --positions 5000 --max-plies 80 --label-depth 2 --seed 0
+
+conda run -n chess python experiments/train_mlp_evaluator.py --input data/mlp_train.csv --output-model data/mlp_eval.pt --epochs 50 --batch-size 64 --learning-rate 0.001 --seed 0
+
+conda run -n chess python experiments/generate_mlp_training_data.py --output data/eval_positions.csv --positions 500 --max-plies 80 --label-depth 1 --seed 999
+
+conda run -n chess python experiments/evaluation_benchmark.py --positions data/eval_positions.csv --output data/evaluation_benchmark.csv --evaluators material,position,mobility,king_safety,full_static,weighted_static,mlp --search-depth 2 --oracle-depth 3 --oracle-evaluator full_static --mlp-model data/mlp_eval.pt --limit 200
+
+conda run -n chess python experiments/self_play_tournament.py --output data/self_play_results.csv --evaluators material,full_static,weighted_static,mlp --games-per-pair 2 --depth 2 --max-plies 120 --mlp-model data/mlp_eval.pt --opening-random-plies 2 --adjudicate-max-plies --adjudicator-evaluator full_static --adjudication-threshold 200 --seed 42
+
+conda run -n chess python experiments/analyze_benchmark.py --benchmark data/evaluation_benchmark.csv --self-play data/self_play_results.csv --output-report data/experiment_summary.md --output-summary-csv data/experiment_summary.csv
+```
+
+Small smoke tests only verify that the full pipeline runs and that metrics are
+being recorded. Strong conclusions need more positions, a deeper oracle, deeper
+tested searches, and many more self-play games. Current stalemate handling and
+repetition adjudication are simplified to match this study engine's `search.py`
+semantics: stalemate and simplified threefold repetition are treated as draws.
+
 ## Current Scope
 
 Implemented:
@@ -136,6 +185,8 @@ Implemented:
 - alpha-beta pruning via `alpha_beta_search`
 - optional `move_orderer` hook for alpha-beta node-ordering experiments
 - optional PyTorch MLP training/inference scripts for evaluation experiments
+- evaluator registry, oracle benchmark, self-play tournament, and benchmark
+  summary scripts under `experiments/`
 
 Intentionally not implemented yet:
 
@@ -144,4 +195,3 @@ Intentionally not implemented yet:
 - official complex Xiangqi repetition adjudication such as long-check/long-chase
 - complex tactical evaluation such as long combinations, pins, and specialized
   cannon-screen threat scoring
-

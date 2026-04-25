@@ -1,0 +1,289 @@
+"""Benchmark named evaluators against a deeper oracle search."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+from pathlib import Path
+import random
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from engine.core import RED, Board, Move
+from engine.rules import game_over
+from engine.search import alpha_beta_search
+from experiments.evaluator_registry import get_evaluator
+
+DEFAULT_EVALUATORS = (
+    "material",
+    "position",
+    "mobility",
+    "king_safety",
+    "full_static",
+    "weighted_static",
+)
+
+FIELDNAMES = [
+    "position_id",
+    "fen",
+    "side_to_move",
+    "evaluator",
+    "static_score",
+    "search_depth",
+    "search_score",
+    "best_move",
+    "nodes_visited",
+    "leaf_nodes",
+    "cutoffs",
+    "elapsed_seconds",
+    "oracle_evaluator",
+    "oracle_depth",
+    "oracle_score",
+    "oracle_best_move",
+    "candidate_oracle_score",
+    "oracle_regret",
+    "abs_oracle_regret",
+    "score_error",
+    "abs_score_error",
+    "move_matches_oracle",
+]
+
+
+def _parse_evaluator_names(text: str) -> list[str]:
+    names = [name.strip() for name in text.split(",") if name.strip()]
+    if not names:
+        raise ValueError("At least one evaluator must be provided.")
+    return names
+
+
+def _move_to_text(move: Move | None) -> str:
+    return "" if move is None else move.to_iccs()
+
+
+def _candidate_oracle_score(
+    board: Board,
+    candidate_move: Move | None,
+    oracle_evaluator,
+    oracle_depth: int,
+) -> int | None:
+    if candidate_move is None:
+        return None
+
+    original_fen = board.fen()
+    board.make_move(candidate_move)
+    try:
+        result = alpha_beta_search(
+            board,
+            depth=max(0, oracle_depth - 1),
+            evaluator=oracle_evaluator,
+            maximizing_color=RED,
+        )
+        return result.best_score
+    finally:
+        board.undo_move()
+        if board.fen() != original_fen:
+            raise RuntimeError("Candidate oracle evaluation modified board FEN.")
+
+
+def _load_position_rows(path: str, limit: int | None, seed: int) -> list[dict[str, str]]:
+    with Path(path).open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None or "fen" not in reader.fieldnames:
+            raise ValueError("positions CSV must contain a fen column.")
+        rows = list(reader)
+
+    if limit is not None and limit < len(rows):
+        rows = random.Random(seed).sample(rows, limit)
+    return rows
+
+
+def run_benchmark(
+    positions: str,
+    output: str,
+    evaluator_names: list[str] | None = None,
+    search_depth: int = 2,
+    oracle_depth: int = 3,
+    oracle_evaluator_name: str = "full_static",
+    mlp_model: str | None = None,
+    limit: int | None = None,
+    seed: int = 0,
+    skip_terminal: bool = True,
+) -> tuple[int, int]:
+    """Run the benchmark and return ``(rows_written, terminal_skipped)``."""
+    if search_depth < 0 or oracle_depth < 0:
+        raise ValueError("search depths must be non-negative.")
+    if limit is not None and limit < 0:
+        raise ValueError("limit must be non-negative.")
+
+    names = list(DEFAULT_EVALUATORS) if evaluator_names is None else evaluator_names
+    evaluators = {name: get_evaluator(name, mlp_model) for name in names}
+    oracle_evaluator = get_evaluator(oracle_evaluator_name, mlp_model)
+    position_rows = _load_position_rows(positions, limit, seed)
+
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    rows_written = 0
+    terminal_skipped = 0
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=FIELDNAMES)
+        writer.writeheader()
+        abs_regrets_by_evaluator: dict[str, list[int]] = {
+            name: [] for name in names
+        }
+        move_matches_by_evaluator: dict[str, list[bool]] = {
+            name: [] for name in names
+        }
+
+        for position_id, row in enumerate(position_rows):
+            board = Board(row["fen"])
+            original_fen = board.fen()
+            if skip_terminal and game_over(board):
+                terminal_skipped += 1
+                continue
+
+            oracle_result = alpha_beta_search(
+                board,
+                depth=oracle_depth,
+                evaluator=oracle_evaluator,
+                maximizing_color=RED,
+            )
+            if board.fen() != original_fen:
+                raise RuntimeError("Oracle search modified board FEN.")
+
+            oracle_score = oracle_result.best_score
+            oracle_best_move = _move_to_text(oracle_result.best_move)
+
+            for evaluator_name, evaluator in evaluators.items():
+                static_score = evaluator(board, RED)
+                if board.fen() != original_fen:
+                    raise RuntimeError(f"{evaluator_name} modified board FEN.")
+
+                search_result = alpha_beta_search(
+                    board,
+                    depth=search_depth,
+                    evaluator=evaluator,
+                    maximizing_color=RED,
+                )
+                if board.fen() != original_fen:
+                    raise RuntimeError(f"{evaluator_name} search modified board FEN.")
+
+                best_move = _move_to_text(search_result.best_move)
+                candidate_oracle_score = _candidate_oracle_score(
+                    board,
+                    search_result.best_move,
+                    oracle_evaluator,
+                    oracle_depth,
+                )
+                if candidate_oracle_score is None:
+                    oracle_regret = None
+                    abs_oracle_regret = None
+                else:
+                    oracle_regret = oracle_score - candidate_oracle_score
+                    abs_oracle_regret = abs(oracle_regret)
+                    abs_regrets_by_evaluator[evaluator_name].append(abs_oracle_regret)
+
+                score_error = search_result.best_score - oracle_score
+                move_matches_oracle = best_move == oracle_best_move
+                move_matches_by_evaluator[evaluator_name].append(move_matches_oracle)
+                writer.writerow(
+                    {
+                        "position_id": position_id,
+                        "fen": original_fen,
+                        "side_to_move": board.side_to_move,
+                        "evaluator": evaluator_name,
+                        "static_score": static_score,
+                        "search_depth": search_depth,
+                        "search_score": search_result.best_score,
+                        "best_move": best_move,
+                        "nodes_visited": search_result.stats.nodes_visited,
+                        "leaf_nodes": search_result.stats.leaf_nodes,
+                        "cutoffs": search_result.stats.cutoffs,
+                        "elapsed_seconds": f"{search_result.stats.elapsed_seconds:.6f}",
+                        "oracle_evaluator": oracle_evaluator_name,
+                        "oracle_depth": oracle_depth,
+                        "oracle_score": oracle_score,
+                        "oracle_best_move": oracle_best_move,
+                        "candidate_oracle_score": candidate_oracle_score,
+                        "oracle_regret": oracle_regret,
+                        "abs_oracle_regret": abs_oracle_regret,
+                        "score_error": score_error,
+                        "abs_score_error": abs(score_error),
+                        "move_matches_oracle": move_matches_oracle,
+                    }
+                )
+                rows_written += 1
+
+    print(f"Wrote {rows_written} benchmark rows to {output}")
+    print(f"Skipped {terminal_skipped} terminal positions")
+    print(f"Evaluators: {', '.join(names)}")
+    print(f"Oracle: {oracle_evaluator_name} depth {oracle_depth}")
+    regret_means = {
+        name: sum(values) / len(values)
+        for name, values in abs_regrets_by_evaluator.items()
+        if values
+    }
+    if regret_means:
+        best_regret = min(regret_means, key=regret_means.__getitem__)
+        print(
+            "Lowest mean abs_oracle_regret: "
+            f"{best_regret} ({regret_means[best_regret]:.4f})"
+        )
+    match_rates = {
+        name: sum(values) / len(values)
+        for name, values in move_matches_by_evaluator.items()
+        if values
+    }
+    if match_rates:
+        best_match = max(match_rates, key=match_rates.__getitem__)
+        print(
+            "Highest move match rate: "
+            f"{best_match} ({match_rates[best_match]:.4f})"
+        )
+    return rows_written, terminal_skipped
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--positions", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--evaluators",
+        default=",".join(DEFAULT_EVALUATORS),
+        help="Comma-separated evaluator names.",
+    )
+    parser.add_argument("--search-depth", type=int, default=2)
+    parser.add_argument("--oracle-depth", type=int, default=3)
+    parser.add_argument("--oracle-evaluator", default="full_static")
+    parser.add_argument("--mlp-model")
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--skip-terminal",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    run_benchmark(
+        positions=args.positions,
+        output=args.output,
+        evaluator_names=_parse_evaluator_names(args.evaluators),
+        search_depth=args.search_depth,
+        oracle_depth=args.oracle_depth,
+        oracle_evaluator_name=args.oracle_evaluator,
+        mlp_model=args.mlp_model,
+        limit=args.limit,
+        seed=args.seed,
+        skip_terminal=args.skip_terminal,
+    )
+
+
+if __name__ == "__main__":
+    main()
