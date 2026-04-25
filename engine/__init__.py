@@ -12,7 +12,21 @@ from engine.core import (
     Piece,
     Position,
 )
-from engine.evaluation import PIECE_VALUES, evaluate, evaluate_material
+from engine.evaluation import (
+    DEFAULT_EVALUATION_WEIGHTS,
+    EvaluationFeatures,
+    EvaluationWeights,
+    PIECE_VALUES,
+    UNIT_EVALUATION_WEIGHTS,
+    evaluate,
+    evaluate_material,
+    evaluate_piece_value_and_position,
+    evaluate_piece_value_position_and_mobility,
+    evaluate_piece_value_position_mobility_king_safety_and_threats,
+    evaluate_piece_value_position_mobility_and_king_safety,
+    evaluate_weighted_static,
+    extract_evaluation_features,
+)
 from engine.rules import (
     game_over,
     generate_legal_moves,
@@ -22,13 +36,17 @@ from engine.rules import (
     is_stalemate,
     is_threefold_repetition,
 )
-from engine.search import SearchResult, SearchStats, minimax_search
+from engine.search import SearchResult, SearchStats, alpha_beta_search, minimax_search
 
 __all__ = [
     "BLACK",
+    "DEFAULT_EVALUATION_WEIGHTS",
     "DEFAULT_FEN",
+    "EvaluationFeatures",
+    "EvaluationWeights",
     "PIECE_VALUES",
     "RED",
+    "UNIT_EVALUATION_WEIGHTS",
     "Board",
     "BoardStateError",
     "IllegalMoveError",
@@ -38,8 +56,15 @@ __all__ = [
     "Position",
     "SearchResult",
     "SearchStats",
+    "alpha_beta_search",
     "evaluate",
     "evaluate_material",
+    "evaluate_piece_value_and_position",
+    "evaluate_piece_value_position_and_mobility",
+    "evaluate_piece_value_position_mobility_king_safety_and_threats",
+    "evaluate_piece_value_position_mobility_and_king_safety",
+    "evaluate_weighted_static",
+    "extract_evaluation_features",
     "game_over",
     "generate_legal_moves",
     "generate_pseudo_legal_moves",

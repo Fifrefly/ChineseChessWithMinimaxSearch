@@ -9,6 +9,13 @@ dependencies = []
 dev = [
   "pytest>=8.0",
 ]
+ml = [
+  "torch>=2.0",
+  "numpy>=1.24",
+]
+
+[tool.setuptools.packages.find]
+include = ["engine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
