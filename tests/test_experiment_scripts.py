@@ -129,6 +129,27 @@ def test_evaluation_benchmark_runs_on_tiny_csv(tmp_path: Path) -> None:
     assert board.fen() == original_fen
 
 
+def test_evaluation_benchmark_accepts_static_move_ordering(tmp_path: Path) -> None:
+    positions = tmp_path / "positions.csv"
+    output = tmp_path / "benchmark_static_ordering.csv"
+    with positions.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["fen"])
+        writer.writeheader()
+        writer.writerow({"fen": Board().fen()})
+
+    rows_written, skipped = run_benchmark(
+        positions=str(positions),
+        output=str(output),
+        evaluator_names=["material"],
+        search_depth=1,
+        oracle_depth=1,
+        move_ordering="static",
+    )
+
+    assert skipped == 0
+    assert rows_written == 1
+
+
 def test_decision_loss_metrics_are_side_to_move_relative() -> None:
     assert _decision_loss_metrics("r", 100, 70) == (-30, 30)
     assert _decision_loss_metrics("r", 100, 120) == (20, 0)

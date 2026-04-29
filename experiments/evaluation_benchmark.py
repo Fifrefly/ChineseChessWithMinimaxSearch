@@ -13,8 +13,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from engine.core import RED, Board, Move
+from engine.move_ordering import static_move_orderer
 from engine.rules import game_over
-from engine.search import alpha_beta_search
+from engine.search import MoveOrderer, alpha_beta_search
 from experiments.evaluator_registry import get_evaluator
 
 DEFAULT_EVALUATORS = (
@@ -25,6 +26,7 @@ DEFAULT_EVALUATORS = (
     "full_static",
     "weighted_static",
 )
+MOVE_ORDERING_CHOICES = ("none", "static")
 
 FIELDNAMES = [
     "position_id",
@@ -65,6 +67,16 @@ def _move_to_text(move: Move | None) -> str:
     return "" if move is None else move.to_iccs()
 
 
+def _move_orderer_for_name(name: str) -> MoveOrderer | None:
+    if name == "none":
+        return None
+    if name == "static":
+        return static_move_orderer
+    raise ValueError(
+        f"move_ordering must be one of {', '.join(MOVE_ORDERING_CHOICES)}."
+    )
+
+
 def _percentile(values: list[int], percentile: float) -> float:
     if not values:
         return 0.0
@@ -85,6 +97,7 @@ def _candidate_oracle_score(
     candidate_move: Move | None,
     oracle_evaluator,
     oracle_depth: int,
+    move_orderer: MoveOrderer | None = None,
 ) -> int | None:
     if candidate_move is None:
         return None
@@ -97,6 +110,7 @@ def _candidate_oracle_score(
             depth=max(0, oracle_depth - 1),
             evaluator=oracle_evaluator,
             maximizing_color=RED,
+            move_orderer=move_orderer,
         )
         return result.best_score
     finally:
@@ -145,6 +159,7 @@ def run_benchmark(
     limit: int | None = None,
     seed: int = 0,
     skip_terminal: bool = True,
+    move_ordering: str = "none",
 ) -> tuple[int, int]:
     """Run the benchmark and return ``(rows_written, terminal_skipped)``."""
     if search_depth < 0 or oracle_depth < 0:
@@ -155,6 +170,7 @@ def run_benchmark(
     names = list(DEFAULT_EVALUATORS) if evaluator_names is None else evaluator_names
     evaluators = {name: get_evaluator(name, mlp_model) for name in names}
     oracle_evaluator = get_evaluator(oracle_evaluator_name, mlp_model)
+    move_orderer = _move_orderer_for_name(move_ordering)
     position_rows = _load_position_rows(positions, limit, seed)
 
     output_path = Path(output)
@@ -184,6 +200,7 @@ def run_benchmark(
                 depth=oracle_depth,
                 evaluator=oracle_evaluator,
                 maximizing_color=RED,
+                move_orderer=move_orderer,
             )
             if board.fen() != original_fen:
                 raise RuntimeError("Oracle search modified board FEN.")
@@ -201,6 +218,7 @@ def run_benchmark(
                     depth=search_depth,
                     evaluator=evaluator,
                     maximizing_color=RED,
+                    move_orderer=move_orderer,
                 )
                 if board.fen() != original_fen:
                     raise RuntimeError(f"{evaluator_name} search modified board FEN.")
@@ -211,6 +229,7 @@ def run_benchmark(
                     search_result.best_move,
                     oracle_evaluator,
                     oracle_depth,
+                    move_orderer,
                 )
                 if candidate_oracle_score is None:
                     oracle_regret = None
@@ -264,6 +283,7 @@ def run_benchmark(
     print(f"Skipped {terminal_skipped} terminal positions")
     print(f"Evaluators: {', '.join(names)}")
     print(f"Oracle: {oracle_evaluator_name} depth {oracle_depth}")
+    print(f"Move ordering: {move_ordering}")
     regret_means = {
         name: sum(values) / len(values)
         for name, values in abs_regrets_by_evaluator.items()
@@ -329,6 +349,12 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
     )
+    parser.add_argument(
+        "--move-ordering",
+        choices=MOVE_ORDERING_CHOICES,
+        default="none",
+        help="Move ordering heuristic for alpha-beta search.",
+    )
     return parser.parse_args()
 
 
@@ -345,6 +371,7 @@ def main() -> None:
         limit=args.limit,
         seed=args.seed,
         skip_terminal=args.skip_terminal,
+        move_ordering=args.move_ordering,
     )
 
 

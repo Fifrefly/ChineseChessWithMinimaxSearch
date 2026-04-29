@@ -27,6 +27,7 @@ from engine.evaluation import (
     evaluate_weighted_static,
     extract_evaluation_features,
 )
+from engine.move_ordering import static_move_orderer
 from engine.rules import (
     game_over,
     generate_legal_moves,
@@ -73,5 +74,5 @@ __all__ = [
     "is_stalemate",
     "is_threefold_repetition",
     "minimax_search",
+    "static_move_orderer",
 ]
-
