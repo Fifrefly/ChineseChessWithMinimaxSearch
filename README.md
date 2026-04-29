@@ -101,10 +101,23 @@ Generate labeled positions:
 python experiments/generate_mlp_training_data.py --output data/mlp_train.csv --positions 1000 --max-plies 80 --label-depth 2 --seed 0
 ```
 
+Use multiple workers to speed up label generation on larger runs:
+
+```bash
+python experiments/generate_mlp_training_data.py --output data/mlp_train.csv --positions 1000 --max-plies 80 --label-depth 2 --seed 0 --workers 16
+```
+
 Train a small PyTorch MLP:
 
 ```bash
 python experiments/train_mlp_evaluator.py --input data/mlp_train.csv --output-model data/mlp_eval.pt --epochs 50 --batch-size 64 --learning-rate 0.001 --seed 0
+```
+
+For diagnostic training, prefer Huber loss plus target clipping so rare
+mate-scale labels do not dominate the loss:
+
+```bash
+python experiments/train_mlp_evaluator.py --input data/mlp_train.csv --output-model data/mlp_eval_huber_clip.pt --epochs 50 --batch-size 64 --learning-rate 0.001 --seed 0 --loss huber --clip-target-score 5000 --validation-split 0.2 --report-target-stats --output-metrics data/mlp_metrics.csv
 ```
 
 Evaluate one FEN:
@@ -134,19 +147,26 @@ The evaluation pipeline separates four kinds of checks:
 - self-play tournament: let evaluators play both colors and summarize results,
   nodes, cutoffs, and time.
 
-The benchmark reports oracle regret because different evaluators can use
-different score scales. Directly comparing an evaluator's `search_score` to the
-oracle score can be misleading: a score may look numerically close while the
-chosen move is poor. Oracle regret instead applies the tested evaluator's move,
-then uses the same oracle evaluator to score the continuation. Lower
-`mean_abs_oracle_regret` is therefore the main decision-quality metric;
-`mean_abs_score_error` is kept only as a supporting diagnostic.
+The benchmark reports `decision_loss` as the primary move-quality metric.
+It applies the tested evaluator's move, scores the continuation with the same
+oracle evaluator, and measures the non-negative loss relative to the oracle's
+best move from the side-to-move perspective. Legacy oracle regret columns are
+still written for compatibility, but their sign is harder to compare across
+red-to-move and black-to-move positions. `mean_abs_score_error` is kept only as
+a supporting diagnostic because different evaluators can use different score
+scales.
 The summary also reports `p90_abs_oracle_regret` and
 `max_abs_oracle_regret`: p90 helps judge how stable an evaluator is in bad
 cases, while max regret is a quick way to find catastrophic moves. The analyzer
 can write a worst-case CSV for manual position review, which is useful for
 checking where material, position, or MLP evaluators are making qualitatively
 different mistakes.
+
+Inspect a worst-case row by passing its FEN and moves:
+
+```bash
+python experiments/inspect_worst_case.py --fen "1nba1k1n1/9/3a4b/p3P1p2/5c2p/2P5P/P1r1RNP2/2C6/rc1KR4/1NBA1AB2 b - - 17 38" --best-move b1e1 --oracle-best-move c3c2 --oracle-evaluator full_static --oracle-depth 3
+```
 
 Shallow self-play often reaches the move limit without a tactical result. Use
 `--adjudicate-max-plies` to score the final position with an adjudicator
@@ -160,7 +180,7 @@ strength.
 Recommended end-to-end workflow:
 
 ```bash
-conda run -n chess python experiments/generate_mlp_training_data.py --output data/mlp_train.csv --positions 5000 --max-plies 80 --label-depth 2 --seed 0
+conda run -n chess python experiments/generate_mlp_training_data.py --output data/mlp_train.csv --positions 5000 --max-plies 80 --label-depth 2 --seed 0 --workers 16
 
 conda run -n chess python experiments/train_mlp_evaluator.py --input data/mlp_train.csv --output-model data/mlp_eval.pt --epochs 50 --batch-size 64 --learning-rate 0.001 --seed 0
 

@@ -1,0 +1,9 @@
+﻿Wrote 3465 benchmark rows to data/evaluation_benchmark_medium.csv
+Skipped 5 terminal positions
+Evaluators: material, position, mobility, king_safety, full_static, weighted_static, mlp
+Oracle: full_static depth 3
+Lowest mean abs_oracle_regret: mlp (327.1596)
+Lowest p90 abs_oracle_regret: full_static (193.6000)
+Highest max abs_oracle_regret: mobility (997859.0000)
+Highest move match rate: full_static (0.5798)
+Patched 35 terminal-position benchmark rows; total rows now 3500.

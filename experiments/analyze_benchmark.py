@@ -11,6 +11,12 @@ import statistics
 
 BENCHMARK_SUMMARY_FIELDS = [
     "rows",
+    "mean_decision_loss",
+    "median_decision_loss",
+    "decision_loss_rmse",
+    "p90_decision_loss",
+    "max_decision_loss",
+    "zero_decision_loss_rate",
     "mean_abs_oracle_regret",
     "median_abs_oracle_regret",
     "p90_abs_oracle_regret",
@@ -76,6 +82,8 @@ WORST_CASE_FIELDNAMES = [
     "oracle_best_move",
     "oracle_score",
     "candidate_oracle_score",
+    "oracle_delta",
+    "decision_loss",
     "oracle_regret",
     "abs_oracle_regret",
     "static_score",
@@ -126,16 +134,21 @@ def _has_value(row: dict[str, str], key: str) -> bool:
 
 
 def _worst_regret_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
-    regret_rows = [row for row in rows if _has_value(row, "abs_oracle_regret")]
+    sort_key = "decision_loss" if rows and "decision_loss" in rows[0] else "abs_oracle_regret"
+    regret_rows = [row for row in rows if _has_value(row, sort_key)]
     return sorted(
         regret_rows,
-        key=lambda row: _float(row, "abs_oracle_regret"),
+        key=lambda row: _float(row, sort_key),
         reverse=True,
     )
 
 
 def summarize_benchmark(path: str) -> tuple[dict[str, dict[str, object]], dict[str, str]]:
     rows = _read_csv(path)
+    decision_loss_key = (
+        "decision_loss" if rows and "decision_loss" in rows[0] else "abs_oracle_regret"
+    )
+    decision_loss_fallback = decision_loss_key != "decision_loss"
     grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
         grouped[row["evaluator"]].append(row)
@@ -153,6 +166,14 @@ def summarize_benchmark(path: str) -> tuple[dict[str, dict[str, object]], dict[s
             _float(row, "abs_oracle_regret") for row in regret_rows
         ]
         oracle_regrets = [_float(row, "oracle_regret") for row in regret_rows]
+        decision_rows = [
+            row for row in evaluator_rows if _has_value(row, decision_loss_key)
+        ]
+        decision_losses = [_float(row, decision_loss_key) for row in decision_rows]
+        zero_decision_losses = [
+            1.0 if _float(row, decision_loss_key) == 0.0 else 0.0
+            for row in decision_rows
+        ]
         zero_regrets = [
             1.0 if _float(row, "oracle_regret") == 0.0 else 0.0
             for row in regret_rows
@@ -165,6 +186,16 @@ def summarize_benchmark(path: str) -> tuple[dict[str, dict[str, object]], dict[s
         worst_row = worst_rows[0] if worst_rows else {}
         summary[evaluator] = {
             "rows": float(len(evaluator_rows)),
+            "mean_decision_loss": _mean(decision_losses),
+            "median_decision_loss": statistics.median(decision_losses)
+            if decision_losses
+            else 0.0,
+            "decision_loss_rmse": math.sqrt(
+                _mean([loss * loss for loss in decision_losses])
+            ),
+            "p90_decision_loss": _percentile(decision_losses, 0.9),
+            "max_decision_loss": max(decision_losses) if decision_losses else 0.0,
+            "zero_decision_loss_rate": _mean(zero_decision_losses),
             "mean_abs_oracle_regret": _mean(abs_oracle_regrets),
             "median_abs_oracle_regret": statistics.median(abs_oracle_regrets)
             if abs_oracle_regrets
@@ -212,6 +243,8 @@ def summarize_benchmark(path: str) -> tuple[dict[str, dict[str, object]], dict[s
             "search_depth": first.get("search_depth", ""),
             "oracle_depth": first.get("oracle_depth", ""),
             "oracle_evaluator": first.get("oracle_evaluator", ""),
+            "decision_loss_source": decision_loss_key,
+            "decision_loss_fallback": str(decision_loss_fallback),
         }
     return summary, settings
 
@@ -380,6 +413,25 @@ def _benchmark_table(summary: dict[str, dict[str, object]]) -> list[str]:
     return lines
 
 
+def _decision_quality_table(summary: dict[str, dict[str, object]]) -> list[str]:
+    lines = [
+        "| evaluator | mean_decision_loss | p90_decision_loss | max_decision_loss | zero_decision_loss_rate | move_match_rate | mean_abs_oracle_regret | avg_time |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for evaluator in sorted(summary):
+        row = summary[evaluator]
+        lines.append(
+            f"| {evaluator} | {_fmt(_summary_float(row, 'mean_decision_loss'))} | "
+            f"{_fmt(_summary_float(row, 'p90_decision_loss'))} | "
+            f"{_fmt(_summary_float(row, 'max_decision_loss'))} | "
+            f"{_fmt(_summary_float(row, 'zero_decision_loss_rate'))} | "
+            f"{_fmt(_summary_float(row, 'move_match_rate'))} | "
+            f"{_fmt(_summary_float(row, 'mean_abs_oracle_regret'))} | "
+            f"{_fmt(_summary_float(row, 'avg_elapsed_seconds'))} |"
+        )
+    return lines
+
+
 def _self_play_color_table(summary: dict[str, dict[str, float]]) -> list[str]:
     lines = [
         "| evaluator | red_wins | red_losses | red_draws | red_win_rate | black_wins | black_losses | black_draws | black_win_rate |",
@@ -456,15 +508,13 @@ def _mlp_comparison(summary: dict[str, dict[str, object]]) -> list[str]:
     if "mlp" not in summary:
         return []
     lines = []
-    mlp_regret = _summary_float(summary["mlp"], "mean_abs_oracle_regret")
+    mlp_loss = _summary_float(summary["mlp"], "mean_decision_loss")
     for baseline in ("full_static", "weighted_static"):
         if baseline in summary:
-            delta = mlp_regret - _summary_float(
-                summary[baseline], "mean_abs_oracle_regret"
-            )
+            delta = mlp_loss - _summary_float(summary[baseline], "mean_decision_loss")
             relation = "lower" if delta < 0 else "higher"
             lines.append(
-                f"MLP mean_abs_oracle_regret is {abs(delta):.4f} "
+                f"MLP mean_decision_loss is {abs(delta):.4f} "
                 f"{relation} than {baseline}."
             )
     return lines
@@ -500,6 +550,8 @@ def build_worst_case_rows(
                     "oracle_best_move": row.get("oracle_best_move", ""),
                     "oracle_score": row.get("oracle_score", ""),
                     "candidate_oracle_score": row.get("candidate_oracle_score", ""),
+                    "oracle_delta": row.get("oracle_delta", ""),
+                    "decision_loss": row.get("decision_loss", ""),
                     "oracle_regret": row.get("oracle_regret", ""),
                     "abs_oracle_regret": row.get("abs_oracle_regret", ""),
                     "static_score": row.get("static_score", ""),
@@ -526,12 +578,13 @@ def write_worst_cases_csv(
 
 def _worst_cases_table(worst_cases: list[dict[str, object]]) -> list[str]:
     lines = [
-        "| evaluator | rank | position_id | oracle_regret | best_move | oracle_best_move | fen |",
-        "| --- | ---: | ---: | ---: | --- | --- | --- |",
+        "| evaluator | rank | position_id | decision_loss | oracle_delta | oracle_regret | best_move | oracle_best_move | fen |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
     ]
     for row in worst_cases:
         lines.append(
             f"| {row['evaluator']} | {row['rank']} | {row['position_id']} | "
+            f"{row.get('decision_loss', '')} | {row.get('oracle_delta', '')} | "
             f"{row['oracle_regret']} | {row['best_move']} | "
             f"{row['oracle_best_move']} | {row['fen']} |"
         )
@@ -552,10 +605,24 @@ def build_markdown_report(
                 f"- search_depth: {benchmark_settings.get('search_depth', '')}",
                 f"- oracle_depth: {benchmark_settings.get('oracle_depth', '')}",
                 f"- oracle_evaluator: {benchmark_settings.get('oracle_evaluator', '')}",
+                "- decision_loss_source: "
+                f"{benchmark_settings.get('decision_loss_source', '')}",
             ]
         )
+        if benchmark_settings.get("decision_loss_fallback") == "True":
+            lines.append(
+                "- decision_loss fallback: benchmark CSV had no decision_loss "
+                "column, so abs_oracle_regret was used."
+            )
     else:
         lines.append("- benchmark CSV not provided")
+    lines.append("")
+
+    lines.append("## Evaluator Decision Quality vs Oracle")
+    if benchmark_summary:
+        lines.extend(_decision_quality_table(benchmark_summary))
+    else:
+        lines.append("Benchmark data was not provided.")
     lines.append("")
 
     lines.append("## Evaluator Accuracy vs Oracle")
@@ -589,7 +656,8 @@ def build_markdown_report(
     lines.append("## Metric Notes")
     lines.extend(
         [
-            "- mean_abs_oracle_regret measures average decision loss under the shared oracle.",
+            "- decision_loss is the primary move-quality metric. It is always non-negative and measures how much worse the tested move is than the oracle move from the side-to-move perspective.",
+            "- mean_abs_oracle_regret is retained as a legacy metric, but its signed source can be hard to interpret when the side to move changes.",
             "- p90_abs_oracle_regret measures stability in poor but non-maximum cases.",
             "- max_abs_oracle_regret highlights catastrophic moves worth inspecting manually.",
             "- move_match_rate measures how often the evaluator chooses the same best move as the oracle.",
@@ -601,14 +669,14 @@ def build_markdown_report(
     lines.append("## Initial Interpretation")
     interpretation: list[str] = []
     if benchmark_summary:
-        best_regret = _best_names_by(benchmark_summary, "mean_abs_oracle_regret")
+        best_loss = _best_names_by(benchmark_summary, "mean_decision_loss")
         best_match = _best_names_by(
             benchmark_summary, "move_match_rate", reverse=True
         )
-        if best_regret:
+        if best_loss:
             interpretation.append(
-                f"{', '.join(best_regret)} {_verb_for(best_regret)} "
-                "the lowest mean_abs_oracle_regret "
+                f"{', '.join(best_loss)} {_verb_for(best_loss)} "
+                "the lowest mean_decision_loss "
                 "in this run."
             )
         if best_match:

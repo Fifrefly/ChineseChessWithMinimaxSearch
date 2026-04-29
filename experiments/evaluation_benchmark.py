@@ -44,6 +44,8 @@ FIELDNAMES = [
     "oracle_score",
     "oracle_best_move",
     "candidate_oracle_score",
+    "oracle_delta",
+    "decision_loss",
     "oracle_regret",
     "abs_oracle_regret",
     "score_error",
@@ -101,6 +103,23 @@ def _candidate_oracle_score(
         board.undo_move()
         if board.fen() != original_fen:
             raise RuntimeError("Candidate oracle evaluation modified board FEN.")
+
+
+def _decision_loss_metrics(
+    side_to_move: str,
+    oracle_score: int,
+    candidate_oracle_score: int | None,
+) -> tuple[int | None, int | None]:
+    """Return ``(oracle_delta, decision_loss)`` for one candidate move."""
+    if candidate_oracle_score is None:
+        return None, None
+
+    oracle_delta = candidate_oracle_score - oracle_score
+    if side_to_move == RED:
+        raw_loss = oracle_score - candidate_oracle_score
+    else:
+        raw_loss = candidate_oracle_score - oracle_score
+    return oracle_delta, max(0, raw_loss)
 
 
 def _load_position_rows(path: str, limit: int | None, seed: int) -> list[dict[str, str]]:
@@ -196,9 +215,16 @@ def run_benchmark(
                 if candidate_oracle_score is None:
                     oracle_regret = None
                     abs_oracle_regret = None
+                    oracle_delta = None
+                    decision_loss = None
                 else:
                     oracle_regret = oracle_score - candidate_oracle_score
                     abs_oracle_regret = abs(oracle_regret)
+                    oracle_delta, decision_loss = _decision_loss_metrics(
+                        board.side_to_move,
+                        oracle_score,
+                        candidate_oracle_score,
+                    )
                     abs_regrets_by_evaluator[evaluator_name].append(abs_oracle_regret)
 
                 score_error = search_result.best_score - oracle_score
@@ -223,6 +249,8 @@ def run_benchmark(
                         "oracle_score": oracle_score,
                         "oracle_best_move": oracle_best_move,
                         "candidate_oracle_score": candidate_oracle_score,
+                        "oracle_delta": oracle_delta,
+                        "decision_loss": decision_loss,
                         "oracle_regret": oracle_regret,
                         "abs_oracle_regret": abs_oracle_regret,
                         "score_error": score_error,

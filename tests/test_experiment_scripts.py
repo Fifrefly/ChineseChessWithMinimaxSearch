@@ -6,11 +6,92 @@ import csv
 from pathlib import Path
 
 from engine.core import Board
+from engine.rules import generate_legal_moves
 from experiments.analyze_benchmark import analyze
 from experiments.evaluation_benchmark import FIELDNAMES as BENCHMARK_FIELDS
+from experiments.evaluation_benchmark import _decision_loss_metrics
 from experiments.evaluation_benchmark import run_benchmark
+from experiments.generate_mlp_training_data import FIELDNAMES as TRAINING_FIELDS
+from experiments.generate_mlp_training_data import write_training_data
+from experiments.inspect_worst_case import inspect_worst_case
 from experiments.self_play_tournament import FIELDNAMES as SELF_PLAY_FIELDS
 from experiments.self_play_tournament import run_tournament
+
+
+def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def test_generate_mlp_training_data_serial_writes_small_csv(tmp_path: Path) -> None:
+    output = tmp_path / "train_serial.csv"
+
+    rows_written = write_training_data(
+        output=str(output),
+        positions=2,
+        max_plies=0,
+        label_depth=0,
+        seed=123,
+        workers=1,
+        progress_every=1,
+    )
+
+    rows = _read_csv_rows(output)
+    assert rows_written == 2
+    assert len(rows) == 2
+    assert list(rows[0].keys()) == TRAINING_FIELDS
+
+
+def test_generate_mlp_training_data_parallel_writes_small_csv(tmp_path: Path) -> None:
+    output = tmp_path / "train_parallel.csv"
+
+    rows_written = write_training_data(
+        output=str(output),
+        positions=2,
+        max_plies=0,
+        label_depth=0,
+        seed=123,
+        workers=2,
+        chunk_size=1,
+        progress_every=1,
+    )
+
+    rows = _read_csv_rows(output)
+    assert rows_written == 2
+    assert len(rows) == 2
+    assert list(rows[0].keys()) == TRAINING_FIELDS
+
+
+def test_generate_mlp_training_data_resume_appends_missing_rows(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "train_resume.csv"
+
+    first_write = write_training_data(
+        output=str(output),
+        positions=1,
+        max_plies=0,
+        label_depth=0,
+        seed=123,
+        workers=1,
+    )
+    second_write = write_training_data(
+        output=str(output),
+        positions=3,
+        max_plies=0,
+        label_depth=0,
+        seed=123,
+        workers=1,
+        resume=True,
+        progress_every=1,
+    )
+
+    rows = _read_csv_rows(output)
+    lines = output.read_text(encoding="utf-8").splitlines()
+    assert first_write == 1
+    assert second_write == 2
+    assert len(rows) == 3
+    assert lines.count(",".join(TRAINING_FIELDS)) == 1
 
 
 def test_evaluation_benchmark_runs_on_tiny_csv(tmp_path: Path) -> None:
@@ -39,11 +120,21 @@ def test_evaluation_benchmark_runs_on_tiny_csv(tmp_path: Path) -> None:
     assert len(rows) == 2
     assert set(BENCHMARK_FIELDS).issubset(rows[0])
     assert "candidate_oracle_score" in rows[0]
+    assert "oracle_delta" in rows[0]
+    assert "decision_loss" in rows[0]
     assert "oracle_regret" in rows[0]
     assert "abs_oracle_regret" in rows[0]
     assert "move_matches_oracle" in rows[0]
     assert {row["evaluator"] for row in rows} == {"material", "full_static"}
     assert board.fen() == original_fen
+
+
+def test_decision_loss_metrics_are_side_to_move_relative() -> None:
+    assert _decision_loss_metrics("r", 100, 70) == (-30, 30)
+    assert _decision_loss_metrics("r", 100, 120) == (20, 0)
+    assert _decision_loss_metrics("b", 100, 130) == (30, 30)
+    assert _decision_loss_metrics("b", 100, 80) == (-20, 0)
+    assert _decision_loss_metrics("r", 100, None) == (None, None)
 
 
 def test_self_play_tournament_writes_expected_fields(tmp_path: Path) -> None:
@@ -104,6 +195,8 @@ def test_analyze_benchmark_generates_markdown_and_summary_csv(
                 "oracle_score": 12,
                 "oracle_best_move": "a0a1",
                 "candidate_oracle_score": 12,
+                "oracle_delta": 0,
+                "decision_loss": 0,
                 "oracle_regret": 0,
                 "abs_oracle_regret": 0,
                 "score_error": -2,
@@ -129,8 +222,10 @@ def test_analyze_benchmark_generates_markdown_and_summary_csv(
                 "oracle_depth": 2,
                 "oracle_score": 20,
                 "oracle_best_move": "c0c1",
-                "candidate_oracle_score": 5,
-                "oracle_regret": 15,
+                "candidate_oracle_score": 35,
+                "oracle_delta": 15,
+                "decision_loss": 15,
+                "oracle_regret": -15,
                 "abs_oracle_regret": 15,
                 "score_error": -30,
                 "abs_score_error": 30,
@@ -184,6 +279,8 @@ def test_analyze_benchmark_generates_markdown_and_summary_csv(
     assert summary_csv.exists()
     assert worst_cases.exists()
     assert "# Experiment Summary" in markdown
+    assert "Evaluator Decision Quality vs Oracle" in markdown
+    assert "mean_decision_loss" in markdown
     assert "mean_abs_oracle_regret" in markdown
     assert "p90_abs_oracle_regret" in markdown
     assert "max_abs_oracle_regret" in markdown
@@ -192,6 +289,7 @@ def test_analyze_benchmark_generates_markdown_and_summary_csv(
     with worst_cases.open(newline="", encoding="utf-8") as handle:
         worst_rows = list(csv.DictReader(handle))
     assert len(worst_rows) == 1
+    assert "decision_loss" in worst_rows[0]
     assert worst_rows[0]["position_id"] == "1"
     with summary_csv.open(newline="", encoding="utf-8") as handle:
         summary_rows = list(csv.DictReader(handle))
@@ -200,3 +298,80 @@ def test_analyze_benchmark_generates_markdown_and_summary_csv(
     assert "black_losses" in summary_fields
     assert "red_win_rate" in summary_fields
     assert "black_win_rate" in summary_fields
+
+
+def test_analyze_benchmark_falls_back_without_decision_loss(
+    tmp_path: Path,
+) -> None:
+    benchmark = tmp_path / "legacy_benchmark.csv"
+    report = tmp_path / "summary.md"
+    summary_csv = tmp_path / "summary.csv"
+    worst_cases = tmp_path / "worst_cases.csv"
+    legacy_fields = [
+        field
+        for field in BENCHMARK_FIELDS
+        if field not in {"oracle_delta", "decision_loss"}
+    ]
+
+    with benchmark.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=legacy_fields)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "position_id": 0,
+                "fen": Board().fen(),
+                "side_to_move": "r",
+                "evaluator": "material",
+                "static_score": 0,
+                "search_depth": 1,
+                "search_score": 10,
+                "best_move": "a0a1",
+                "nodes_visited": 2,
+                "leaf_nodes": 1,
+                "cutoffs": 0,
+                "elapsed_seconds": 0.01,
+                "oracle_evaluator": "full_static",
+                "oracle_depth": 2,
+                "oracle_score": 12,
+                "oracle_best_move": "a0a1",
+                "candidate_oracle_score": 7,
+                "oracle_regret": 5,
+                "abs_oracle_regret": 5,
+                "score_error": -2,
+                "abs_score_error": 2,
+                "move_matches_oracle": True,
+            }
+        )
+
+    markdown = analyze(
+        benchmark=str(benchmark),
+        self_play=None,
+        output_report=str(report),
+        output_summary_csv=str(summary_csv),
+        output_worst_cases=str(worst_cases),
+        worst_cases_per_evaluator=1,
+    )
+
+    assert "decision_loss fallback" in markdown
+    with summary_csv.open(newline="", encoding="utf-8") as handle:
+        summary_rows = list(csv.DictReader(handle))
+    assert float(summary_rows[0]["mean_decision_loss"]) == 5.0
+
+
+def test_inspect_worst_case_outputs_moves_without_modifying_board() -> None:
+    board = Board()
+    original_fen = board.fen()
+    move = generate_legal_moves(board)[0].to_iccs()
+
+    output = inspect_worst_case(
+        fen=original_fen,
+        best_move=move,
+        oracle_best_move=move,
+        oracle_evaluator_name="full_static",
+        oracle_depth=1,
+    )
+
+    assert "Original FEN:" in output
+    assert f"best_move: {move}" in output
+    assert f"oracle_best_move: {move}" in output
+    assert board.fen() == original_fen
