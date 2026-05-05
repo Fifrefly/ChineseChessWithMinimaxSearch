@@ -1,0 +1,13 @@
+{
+  "best_epoch": 20,
+  "best_val_loss": 0.15403766930103302,
+  "cuda_available": true,
+  "device": "cuda",
+  "elapsed_seconds": 82.76748781790957,
+  "input": "data/nnue_training_data.csv",
+  "output_dir": "data/nnue",
+  "test_samples": 3306,
+  "torch_version": "2.0.1+cu117",
+  "train_samples": 26453,
+  "val_samples": 3306
+}
