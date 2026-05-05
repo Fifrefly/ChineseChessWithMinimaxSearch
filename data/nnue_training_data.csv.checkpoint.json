@@ -1,0 +1,39 @@
+{
+  "next_position_id": 33065,
+  "output": "data\\nnue_training_data.csv",
+  "parameters": {
+    "include_terminal": false,
+    "max_plies": 100,
+    "min_plies": 0,
+    "oracle_depth": 3,
+    "oracle_evaluator": "full_static",
+    "seed": 0,
+    "self_play_depth": 2,
+    "self_play_evaluator": "weighted_static",
+    "self_play_top_k": 4,
+    "temperature": 0.0
+  },
+  "seed": 0,
+  "source_counts": {
+    "random_playout": 33065,
+    "static_self_play": 0,
+    "tactical_capture": 0,
+    "tactical_check": 0
+  },
+  "sources": {
+    "random_playout": {
+      "next_sample_index": 34182
+    },
+    "static_self_play": {
+      "next_sample_index": 0
+    },
+    "tactical_capture": {
+      "next_sample_index": 0
+    },
+    "tactical_check": {
+      "next_sample_index": 0
+    }
+  },
+  "updated_at": "2026-05-04T17:05:18.810785+00:00",
+  "version": 1
+}

@@ -7,11 +7,14 @@ from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 import csv
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+import json
 import math
+import os
 from pathlib import Path
 import random
 import sys
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +44,7 @@ SOURCE_OFFSETS = {
     SOURCE_TACTICAL_CHECK: 10007,
 }
 TACTICAL_LOCAL_ATTEMPTS = 4
+CHECKPOINT_VERSION = 1
 
 FIELDNAMES = [
     "position_id",
@@ -283,14 +287,14 @@ def worker_generate_row(task: GenerationTask) -> dict[str, Any]:
         candidate = _generate_candidate(task)
         if candidate is None:
             if task.source == SOURCE_RANDOM_PLAYOUT:
-                return {"status": "terminal_skipped"}
-            return {"status": "no_candidate"}
+                return _worker_result(task, "terminal_skipped")
+            return _worker_result(task, "no_candidate")
 
         board = Board(candidate.fen)
         original_fen = board.fen()
         terminal = game_over(board)
         if terminal and not task.include_terminal:
-            return {"status": "terminal_skipped"}
+            return _worker_result(task, "terminal_skipped")
 
         legal_moves = generate_legal_moves(board)
         label = label_position(board, task.oracle_depth, task.oracle_evaluator)
@@ -316,9 +320,9 @@ def worker_generate_row(task: GenerationTask) -> dict[str, Any]:
             "cutoffs": label.cutoffs,
             "elapsed_seconds": f"{label.elapsed_seconds:.6f}",
         }
-        return {"status": "ok", "row": row}
+        return _worker_result(task, "ok", row=row)
     except Exception as exc:  # pragma: no cover - exercised by integration paths.
-        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        return _worker_result(task, "error", error=f"{type(exc).__name__}: {exc}")
 
 
 def write_training_data(
@@ -343,6 +347,7 @@ def write_training_data(
     include_terminal: bool = False,
     max_attempts_multiplier: int = 20,
     max_errors: int = 100,
+    checkpoint_path: str | None = None,
 ) -> GenerationSummary:
     """Generate NNUE-style training rows and write them from the main process."""
     _validate_counts(
@@ -354,6 +359,11 @@ def write_training_data(
         max_plies,
     )
     output_path = Path(output)
+    active_checkpoint_path = (
+        _default_checkpoint_path(output_path)
+        if checkpoint_path is None
+        else Path(checkpoint_path)
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     chunk_size = max(1, chunk_size)
     progress_every = max(1, progress_every)
@@ -376,10 +386,37 @@ def write_training_data(
         source: max(requested_by_source[source] - existing_source_counts[source], 0)
         for source in SOURCE_ORDER
     }
+    generation_parameters = _checkpoint_parameters(
+        seed=seed,
+        min_plies=min_plies,
+        max_plies=max_plies,
+        oracle_depth=oracle_depth,
+        oracle_evaluator=oracle_evaluator,
+        self_play_depth=self_play_depth,
+        self_play_evaluator=self_play_evaluator,
+        temperature=temperature,
+        self_play_top_k=self_play_top_k,
+        include_terminal=include_terminal,
+    )
+    checkpoint, source_start_indices = _prepare_checkpoint(
+        output_path=output_path,
+        checkpoint_path=active_checkpoint_path,
+        resume=resume,
+        existing_source_counts=existing_source_counts,
+        parameters=generation_parameters,
+    )
     state = _RunState(source_targets)
     mode = "a" if resume and output_path.exists() else "w"
     write_header = mode == "w"
     start = perf_counter()
+    processed_results = 0
+
+    _save_checkpoint(
+        active_checkpoint_path,
+        checkpoint,
+        existing_source_counts + state.written_by_source,
+        next_position_id,
+    )
 
     with output_path.open(mode, newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDNAMES)
@@ -395,6 +432,7 @@ def write_training_data(
                 task_iter = _task_iter(
                     source=source,
                     attempts=attempts,
+                    start_index=source_start_indices[source],
                     base_seed=seed,
                     min_plies=min_plies,
                     max_plies=max_plies,
@@ -411,8 +449,6 @@ def write_training_data(
                     task_iter,
                     chunksize=chunk_size,
                 ):
-                    if state.written_by_source[source] >= target:
-                        break
                     _handle_worker_result(
                         result,
                         source,
@@ -420,12 +456,35 @@ def write_training_data(
                         seen_keys,
                         state,
                         next_position_id,
-                        max_errors,
                         start,
                         progress_every,
                     )
+                    _advance_checkpoint(checkpoint, result)
                     if result.get("_wrote_row"):
                         next_position_id += 1
+                    processed_results += 1
+                    if (
+                        result.get("_wrote_row")
+                        or processed_results % progress_every == 0
+                    ):
+                        _save_checkpoint(
+                            active_checkpoint_path,
+                            checkpoint,
+                            existing_source_counts + state.written_by_source,
+                            next_position_id,
+                        )
+                    if state.error_count > max_errors:
+                        _save_checkpoint(
+                            active_checkpoint_path,
+                            checkpoint,
+                            existing_source_counts + state.written_by_source,
+                            next_position_id,
+                        )
+                        raise RuntimeError(
+                            f"Too many worker errors: {state.error_count}"
+                        )
+                    if state.written_by_source[source] >= target:
+                        break
 
                 if state.written_by_source[source] < target:
                     print(
@@ -434,9 +493,21 @@ def write_training_data(
                         f"{state.written_by_source[source]} after max attempts.",
                         flush=True,
                     )
+                _save_checkpoint(
+                    active_checkpoint_path,
+                    checkpoint,
+                    existing_source_counts + state.written_by_source,
+                    next_position_id,
+                )
 
     elapsed = perf_counter() - start
     total_rows = next_position_id
+    _save_checkpoint(
+        active_checkpoint_path,
+        checkpoint,
+        existing_source_counts + state.written_by_source,
+        next_position_id,
+    )
     return GenerationSummary(
         output=str(output_path),
         new_rows_written=state.new_rows_written,
@@ -473,6 +544,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--include-terminal", action="store_true")
     parser.add_argument("--max-attempts-multiplier", type=int, default=20)
     parser.add_argument("--max-errors", type=int, default=100)
+    parser.add_argument("--checkpoint-path")
     return parser.parse_args(argv)
 
 
@@ -500,6 +572,7 @@ def main() -> None:
         include_terminal=args.include_terminal,
         max_attempts_multiplier=args.max_attempts_multiplier,
         max_errors=args.max_errors,
+        checkpoint_path=args.checkpoint_path,
     )
     print(
         "Generation complete: "
@@ -679,9 +752,200 @@ def _load_existing(output_path: Path) -> dict[str, Any]:
     }
 
 
+def _worker_result(
+    task: GenerationTask,
+    status: str,
+    *,
+    row: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": status,
+        "source": task.source,
+        "sample_index": task.sample_index,
+    }
+    if row is not None:
+        result["row"] = row
+    if error is not None:
+        result["error"] = error
+    return result
+
+
+def _default_checkpoint_path(output_path: Path) -> Path:
+    return Path(f"{output_path}.checkpoint.json")
+
+
+def _checkpoint_parameters(
+    seed: int,
+    min_plies: int,
+    max_plies: int,
+    oracle_depth: int,
+    oracle_evaluator: str,
+    self_play_depth: int,
+    self_play_evaluator: str,
+    temperature: float,
+    self_play_top_k: int,
+    include_terminal: bool,
+) -> dict[str, Any]:
+    return {
+        "seed": seed,
+        "min_plies": min_plies,
+        "max_plies": max_plies,
+        "oracle_depth": oracle_depth,
+        "oracle_evaluator": oracle_evaluator,
+        "self_play_depth": self_play_depth,
+        "self_play_evaluator": self_play_evaluator,
+        "temperature": temperature,
+        "self_play_top_k": self_play_top_k,
+        "include_terminal": include_terminal,
+    }
+
+
+def _new_checkpoint(
+    output_path: Path,
+    parameters: dict[str, Any],
+    source_start_indices: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    starts = source_start_indices or {source: 0 for source in SOURCE_ORDER}
+    return {
+        "version": CHECKPOINT_VERSION,
+        "output": str(output_path),
+        "seed": parameters["seed"],
+        "parameters": dict(parameters),
+        "sources": {
+            source: {"next_sample_index": int(starts.get(source, 0))}
+            for source in SOURCE_ORDER
+        },
+    }
+
+
+def _prepare_checkpoint(
+    output_path: Path,
+    checkpoint_path: Path,
+    resume: bool,
+    existing_source_counts: Counter[str],
+    parameters: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, int]]:
+    fallback_starts = {
+        source: int(existing_source_counts[source]) for source in SOURCE_ORDER
+    }
+    if resume and checkpoint_path.exists():
+        checkpoint = _load_checkpoint(checkpoint_path)
+        _warn_checkpoint_mismatches(checkpoint, parameters)
+        checkpoint["version"] = CHECKPOINT_VERSION
+        checkpoint["output"] = str(output_path)
+        checkpoint["seed"] = parameters["seed"]
+        checkpoint["parameters"] = dict(parameters)
+        starts = {
+            source: int(
+                checkpoint.get("sources", {})
+                .get(source, {})
+                .get("next_sample_index", fallback_starts[source])
+            )
+            for source in SOURCE_ORDER
+        }
+        for source in SOURCE_ORDER:
+            checkpoint.setdefault("sources", {}).setdefault(source, {})
+            checkpoint["sources"][source]["next_sample_index"] = starts[source]
+        return checkpoint, starts
+
+    if resume:
+        print(
+            "WARNING: checkpoint file not found; using existing CSV source counts "
+            "as fallback sample start indices.",
+            flush=True,
+        )
+        checkpoint = _new_checkpoint(output_path, parameters, fallback_starts)
+        return checkpoint, fallback_starts
+
+    checkpoint = _new_checkpoint(output_path, parameters)
+    return checkpoint, {source: 0 for source in SOURCE_ORDER}
+
+
+def _load_checkpoint(checkpoint_path: Path) -> dict[str, Any]:
+    with checkpoint_path.open(encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError(f"Checkpoint must contain a JSON object: {checkpoint_path}")
+    return data
+
+
+def _warn_checkpoint_mismatches(
+    checkpoint: dict[str, Any],
+    parameters: dict[str, Any],
+) -> None:
+    checkpoint_parameters = checkpoint.get("parameters", {})
+    for key, value in parameters.items():
+        checkpoint_value = checkpoint_parameters.get(key, checkpoint.get(key))
+        if checkpoint_value != value:
+            print(
+                "WARNING: checkpoint parameter mismatch for "
+                f"{key}: checkpoint={checkpoint_value!r}, current={value!r}",
+                flush=True,
+            )
+
+
+def _advance_checkpoint(checkpoint: dict[str, Any], result: dict[str, Any]) -> None:
+    source = result.get("source")
+    sample_index = result.get("sample_index")
+    if source not in SOURCE_ORDER or sample_index is None:
+        return
+    source_state = checkpoint.setdefault("sources", {}).setdefault(source, {})
+    current = int(source_state.get("next_sample_index", 0))
+    source_state["next_sample_index"] = max(current, int(sample_index) + 1)
+
+
+def _save_checkpoint(
+    checkpoint_path: Path,
+    checkpoint: dict[str, Any],
+    source_counts: Counter[str],
+    next_position_id: int,
+) -> None:
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint["updated_at"] = datetime.now(UTC).isoformat()
+    checkpoint["source_counts"] = {
+        source: int(source_counts[source]) for source in SOURCE_ORDER
+    }
+    checkpoint["next_position_id"] = next_position_id
+    payload = json.dumps(checkpoint, indent=2, sort_keys=True) + "\n"
+
+    for attempt in range(5):
+        temporary_path = checkpoint_path.with_name(
+            f"{checkpoint_path.name}.tmp.{os.getpid()}.{attempt}"
+        )
+        try:
+            temporary_path.write_text(payload, encoding="utf-8")
+            os.replace(temporary_path, checkpoint_path)
+            return
+        except PermissionError:
+            sleep(0.25 * (attempt + 1))
+        except OSError as exc:
+            print(
+                f"WARNING: could not atomically save checkpoint: {exc}",
+                flush=True,
+            )
+            break
+        finally:
+            try:
+                if temporary_path.exists():
+                    temporary_path.unlink()
+            except OSError:
+                pass
+
+    try:
+        checkpoint_path.write_text(payload, encoding="utf-8")
+    except OSError as exc:
+        print(
+            "WARNING: failed to save checkpoint; CSV rows already written, "
+            f"but resume position may be stale: {exc}",
+            flush=True,
+        )
+
+
 def _task_iter(
     source: str,
     attempts: int,
+    start_index: int,
     base_seed: int,
     min_plies: int,
     max_plies: int,
@@ -693,7 +957,7 @@ def _task_iter(
     self_play_top_k: int,
     include_terminal: bool,
 ) -> Any:
-    for sample_index in range(attempts):
+    for sample_index in range(start_index, start_index + attempts):
         task_seed = base_seed + sample_index * 1009 + SOURCE_OFFSETS[source]
         yield GenerationTask(
             source=source,
@@ -718,7 +982,6 @@ def _handle_worker_result(
     seen_keys: set[str],
     state: _RunState,
     next_position_id: int,
-    max_errors: int,
     start: float,
     progress_every: int,
 ) -> None:
@@ -746,13 +1009,9 @@ def _handle_worker_result(
     if status == "error":
         state.error_count += 1
         print(f"ERROR sample failed: {result.get('error', '')}", flush=True)
-        if state.error_count > max_errors:
-            raise RuntimeError(f"Too many worker errors: {state.error_count}")
         return
     state.error_count += 1
     print(f"ERROR unknown worker status: {status}", flush=True)
-    if state.error_count > max_errors:
-        raise RuntimeError(f"Too many worker errors: {state.error_count}")
 
 
 def _print_progress(state: _RunState, start: float) -> None:
@@ -781,15 +1040,27 @@ if __name__ == "__main__":
     main()
 
 """
+在仓库根目录运行这个 PowerShell 命令，8 个 worker，带 `--resume`，并使用默认 checkpoint 路径 `data/nnue_training_data.csv.checkpoint.json`：
+
+
 python experiments/generate_nnue_training_data.py `
-  --output data/nnue_training_data_new.csv `
-  --random-positions 100000 `
-  --self-play-positions 0 `
-  --tactical-capture-positions 0 `
-  --tactical-check-positions 0 `
+  --output data/nnue_training_data.csv `
+  --random-positions 50000 `
+  --self-play-positions 30000 `
+  --tactical-capture-positions 10000 `
+  --tactical-check-positions 10000 `
+  --min-plies 0 `
+  --max-plies 100 `
   --oracle-depth 3 `
-  --workers 15 `
-  --chunk-size 1 `
-  --progress-every 10
+  --oracle-evaluator full_static `
+  --self-play-depth 2 `
+  --self-play-evaluator weighted_static `
+  --temperature 0.0 `
+  --self-play-top-k 4 `
+  --workers 12 `
+  --chunk-size 10 `
+  --progress-every 100 `
+  --seed 0 `
+  --resume
 
 """
